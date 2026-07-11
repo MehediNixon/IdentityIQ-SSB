@@ -1,0 +1,78 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE sailpoint PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<sailpoint>
+<!--
+    Self-Certification Individual Access Attestation - schedule template.
+
+    A targeted/Identity-type CertificationDefinition (template="true") for
+    "attest to your own access" campaigns, where the certifier for each
+    identity is that same identity.
+
+    The certifierType / identities / certifier / owners Attributes keys used
+    below match the CertificationDefinition.getAttributes() contract already
+    relied on by Certification-FallBack-Approver-Rule.xml in this repo:
+      - certifierType = "Manual"  -> use the "certifier" (falling back to
+        "owners") attribute as the certifier for the named identities.
+      - certifierType = "Manager" -> use the target identity's manager as
+        certifier, falling back to "certifier" if the identity has no
+        manager.
+    For genuine self-certification, set certifierType to "Manual" and set
+    "certifier" to the SAME identity/identities listed in "identities" when
+    scheduling a run from this template, so each person certifies their own
+    entitlements.
+
+    Because the certifier equals the subject, this will always be flagged as
+    a self-certification. Whether the sign-off is actually permitted is
+    governed by Configuration/SystemConfiguration.xml
+    "allowSelfCertification" (currently "CertificationAdministrator" in this
+    repo) and, when not permitted, reassigned via "fallbackWorkItemForwardRule"
+    (wired to Certification FallBack Approver Rule) to
+    "selfCertificationViolationOwner" ("All Access Admin Workgroup").
+
+    This is a starting template only - identities/certifier are left blank
+    placeholders below and must be supplied when the certification is
+    scheduled. Validate all attribute and element names against the
+    sailpoint.dtd shipped with the target IdentityIQ version before
+    importing into an environment - CertificationDefinition is a
+    version-sensitive object and this file was not exported from a live
+    system.
+-->
+<CertificationDefinition name="Self-Certification - Individual Access Attestation"
+    template="true"
+    subType="task_item_type_certification"
+    type="Identity"
+    certificationOwner="Certification Administrator"
+    autoSign="false"
+    challengePeriodEnabled="true"
+    remediationPeriodEnabled="true"
+    allowExceptionPopup="true"
+    includeAdditionalEntitlements="true"
+    includeBusinessRoles="true"
+    includePolicyViolations="true">
+  <Description>
+    Individual/targeted access certification where the certifier for each
+    identity is set to that same identity, so each participant attests to
+    their own entitlements. Fill in "identities" and "certifier" with the
+    same identity name(s) when scheduling.
+  </Description>
+  <Attributes>
+    <Map>
+      <entry key="certifierType" value="Manual"/>
+      <entry key="identities" value=""/>
+      <entry key="certifier" value=""/>
+      <entry key="owners" value=""/>
+      <entry key="selfCertificationAllowedLevel" value="CertificationAdministrator"/>
+      <entry key="selfCertificationViolationOwner" value="All Access Admin Workgroup"/>
+      <entry key="fallbackWorkItemForwardRule" value="Certification FallBack Approver Rule"/>
+      <entry key="activePeriodDurationAmount" value="14"/>
+      <entry key="activePeriodDurationScale" value="Day"/>
+      <entry key="challengePeriodDurationAmount" value="3"/>
+      <entry key="challengePeriodDurationScale" value="Day"/>
+      <entry key="remediationPeriodDurationAmount" value="10"/>
+      <entry key="remediationPeriodDurationScale" value="Day"/>
+      <entry key="sendReminders" value="true"/>
+      <entry key="emailsSuppressed" value="false"/>
+    </Map>
+  </Attributes>
+</CertificationDefinition>
+</sailpoint>

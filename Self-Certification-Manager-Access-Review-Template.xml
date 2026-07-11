@@ -1,0 +1,72 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!DOCTYPE sailpoint PUBLIC "sailpoint.dtd" "sailpoint.dtd">
+<sailpoint>
+<!--
+    Self-Certification Manager Access Review - schedule template.
+
+    A Manager access-review CertificationDefinition (template="true") for the
+    case where a manager's own account/entitlements end up in the population
+    they are certifying (e.g. an org-chart edge case, or a delegated
+    certifier who is also a subject). When the certifier of an item matches
+    the item's identity, IdentityIQ treats it as a self-certification and
+    consults:
+      - Configuration/SystemConfiguration.xml "allowSelfCertification"
+        (currently "CertificationAdministrator" in this repo - only users
+        holding the Certification Administrator capability may sign off on
+        their own items; change to "All"/"SystemAdministrator"/"None" to
+        adjust who is permitted).
+      - Configuration/SystemConfiguration.xml "fallbackWorkItemForwardRule",
+        now wired to "Certification FallBack Approver Rule" (see
+        Certification-FallBack-Approver-Rule.xml), which reassigns
+        self-certified work items that are not permitted to sign off.
+      - "selfCertificationViolationOwner", set here to
+        "All Access Admin Workgroup" (matches the default fallback owner
+        already hard-coded in Certification-FallBack-Approver-Rule.xml and
+        SignOff-Rule.xml).
+
+    This is a starting template: certificationOwner, activePeriodDuration and
+    the target population still need to be selected/confirmed on the
+    "Certifications > Schedule Certification" page in IdentityIQ, or by the
+    task/workflow that launches this definition. Validate all attribute and
+    element names against the sailpoint.dtd shipped with the target
+    IdentityIQ version before importing into an environment - CertificationDefinition
+    is a version-sensitive object and this file was not exported from a live
+    system.
+-->
+<CertificationDefinition name="Self-Certification - Manager Access Review"
+    template="true"
+    subType="task_item_type_certification"
+    type="Manager"
+    certificationOwner="Certification Administrator"
+    autoSign="false"
+    challengePeriodEnabled="true"
+    remediationPeriodEnabled="true"
+    allowExceptionPopup="true"
+    allowListBulkApprove="true"
+    allowListBulkRevoke="true"
+    includeAdditionalEntitlements="true"
+    includeBusinessRoles="true"
+    includePolicyViolations="true">
+  <Description>
+    Manager access review that permits a manager to be both the certifier
+    and, for some items, the subject. Self-certified items are handled per
+    the global allowSelfCertification / fallbackWorkItemForwardRule
+    SystemConfiguration settings.
+  </Description>
+  <Attributes>
+    <Map>
+      <entry key="selfCertificationAllowedLevel" value="CertificationAdministrator"/>
+      <entry key="selfCertificationViolationOwner" value="All Access Admin Workgroup"/>
+      <entry key="fallbackWorkItemForwardRule" value="Certification FallBack Approver Rule"/>
+      <entry key="activePeriodDurationAmount" value="30"/>
+      <entry key="activePeriodDurationScale" value="Day"/>
+      <entry key="challengePeriodDurationAmount" value="5"/>
+      <entry key="challengePeriodDurationScale" value="Day"/>
+      <entry key="remediationPeriodDurationAmount" value="10"/>
+      <entry key="remediationPeriodDurationScale" value="Day"/>
+      <entry key="sendReminders" value="true"/>
+      <entry key="emailsSuppressed" value="false"/>
+    </Map>
+  </Attributes>
+</CertificationDefinition>
+</sailpoint>

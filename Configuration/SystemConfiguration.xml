@@ -423,7 +423,7 @@
           <Boolean></Boolean>
         </value>
       </entry>
-      <entry key="fallbackWorkItemForwardRule"/>
+      <entry key="fallbackWorkItemForwardRule" value="Certification FallBack Approver Rule"/>
       <entry key="flattenCertificationManagerHierarchy">
         <value>
           <Boolean></Boolean>
@@ -948,7 +948,7 @@
           </List>
         </value>
       </entry>
-      <entry key="selfCertificationViolationOwner"/>
+      <entry key="selfCertificationViolationOwner" value="All Access Admin Workgroup"/>
       <entry key="selfRegistrationGroup" value="SelfRegistrationWorkGroup"/>
       <entry key="serverRootPath" value="http://localhost:8080/identityiq"/>
       <entry key="showAutoRemediationDialog" value="false"/>
