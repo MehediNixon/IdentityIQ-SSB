@@ -1,0 +1,557 @@
+# ============================================================
+# AD SERVICE ACCOUNT OWNERSHIP RECONCILIATION
+# ============================================================
+
+# ------------------------------------------------------------
+# CONFIGURATION
+# ------------------------------------------------------------
+
+$InputFile = "C:\Reports\AD-ServiceAccountFile.xlsx"
+
+$OutputFile = "C:\Reports\AD-ServiceAccountFile_Result.xlsx"
+
+$LogFile = "C:\Reports\AD-ServiceAccountFile_Log.txt"
+
+
+# SMTP Configuration
+$SmtpServer = "smtp.gmf.com"
+
+$FromAddress = "globalIAM@gmf.com"
+
+
+# IMPORTANT:
+# Keep TRUE during testing.
+# Change to FALSE only when ready to send actual emails.
+$TestMode = $true
+
+
+# ------------------------------------------------------------
+# REQUIRED MODULES
+# ------------------------------------------------------------
+
+# Install-Module ImportExcel -Scope CurrentUser
+
+Import-Module ImportExcel -ErrorAction Stop
+
+
+# ------------------------------------------------------------
+# LOG FUNCTION
+# ------------------------------------------------------------
+
+function Write-Log {
+
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    $LogMessage = "$TimeStamp [$Level] $Message"
+
+    Write-Host $LogMessage
+
+    Add-Content -Path $LogFile -Value $LogMessage
+}
+
+
+# ------------------------------------------------------------
+# CHECK EMPTY VALUE
+# ------------------------------------------------------------
+
+function Test-IsEmpty {
+
+    param(
+        $Value
+    )
+
+    return [string]::IsNullOrWhiteSpace(
+        [string]$Value
+    )
+}
+
+
+# ------------------------------------------------------------
+# EMAIL FUNCTION
+# ------------------------------------------------------------
+
+function Send-ManagerEmail {
+
+    param(
+
+        [string]$ManagerName,
+
+        [string]$ManagerEmail,
+
+        [string]$Account,
+
+        [string]$SamAccountName,
+
+        [string]$Description,
+
+        [string]$Notes
+
+    )
+
+
+    # If no manager email is available,
+    # do not attempt to send email.
+
+    if (Test-IsEmpty $ManagerEmail) {
+
+        Write-Log `
+            "Manager email not available for Manager: $ManagerName | Account: $Account" `
+            "WARNING"
+
+        return "Manager Email Not Available"
+    }
+
+
+    $Subject = "Action Required - Service Account Ownership Confirmation"
+
+
+    $Body = @"
+
+Hello $ManagerName,
+
+You have been identified as the Manager associated with the following service account.
+
+Service Account:
+$Account
+
+SamAccountName:
+$SamAccountName
+
+Description:
+$Description
+
+The ManagedBy field for this service account is currently empty.
+
+As the associated Manager, you are requested to take the necessary action to ensure that a valid and traceable owner is documented for this account.
+
+Current Notes:
+$Notes
+
+If ownership is not established and documented, the account may be flagged for Cyber noncompliance.
+
+Please coordinate with the appropriate team to update the ownership information.
+
+Thank you,
+Identity Management Team
+
+"@
+
+
+    # --------------------------------------------------------
+    # TEST MODE
+    # --------------------------------------------------------
+
+    if ($TestMode -eq $true) {
+
+        Write-Log `
+            "TEST MODE: Email would be sent to $ManagerEmail for account $Account"
+
+        return "Test Mode - Email Not Sent"
+    }
+
+
+    # --------------------------------------------------------
+    # SEND EMAIL
+    # --------------------------------------------------------
+
+    try {
+
+        Send-MailMessage `
+            -SmtpServer $SmtpServer `
+            -From $FromAddress `
+            -To $ManagerEmail `
+            -Subject $Subject `
+            -Body $Body `
+            -ErrorAction Stop
+
+
+        Write-Log `
+            "Email successfully sent to $ManagerEmail for account $Account"
+
+        return "Email Sent"
+    }
+
+    catch {
+
+        Write-Log `
+            "Failed to send email to $ManagerEmail. Error: $($_.Exception.Message)" `
+            "ERROR"
+
+        return "Email Failed"
+    }
+
+}
+
+
+# ============================================================
+# VALIDATE INPUT FILE
+# ============================================================
+
+if (!(Test-Path $InputFile)) {
+
+    Write-Host "Input file not found: $InputFile" `
+        -ForegroundColor Red
+
+    exit
+}
+
+
+Write-Log "Starting Service Account Ownership Reconciliation"
+
+
+# ============================================================
+# IMPORT EXCEL FILE
+# ============================================================
+
+$Records = Import-Excel `
+    -Path $InputFile `
+    -WorksheetName "Sheet1"
+
+
+Write-Log "Total rows read from Excel: $($Records.Count)"
+
+
+# ============================================================
+# RESULT ARRAY
+# ============================================================
+
+$FinalResults = @()
+
+
+# ============================================================
+# PROCESS RECORDS
+# ============================================================
+
+foreach ($Record in $Records) {
+
+
+    # --------------------------------------------------------
+    # ACTUAL COLUMN NAMES FROM YOUR EXCEL FILE
+    # --------------------------------------------------------
+
+    $Account = $Record.Account
+
+    $SamAccountName = $Record.Samaccountname
+
+    $AccountMail = $Record.Mail
+
+    $Manager = $Record.Manager
+
+    $ManagedBy = $Record.ManagedBy
+
+    $Notes = $Record.Notes
+
+    $NotesDataCurrent = $Record.'Notes Data Current'
+
+    $Description = $Record.Description
+
+    $SafeOwnerNames = $Record.'Safe Access Group Owner Names'
+
+    $SafeOwnerAccounts = $Record.'Safe Access Group Owner Accounts'
+
+    $SafeOwnerEmails = $Record.'Safe Access Group Owner Emails'
+
+    $CyberArkSafes = $Record.'CyberArk Safes'
+
+
+
+    # ========================================================
+    # IGNORE COMPLETELY BLANK ACCOUNT ROWS
+    # ========================================================
+
+    if (
+        (Test-IsEmpty $Account) -and
+        (Test-IsEmpty $SamAccountName)
+    ) {
+
+        Write-Log "Skipping blank/incomplete row"
+
+        continue
+    }
+
+
+
+    Write-Log `
+        "Processing Service Account: $Account | SamAccountName: $SamAccountName"
+
+
+
+    # --------------------------------------------------------
+    # DEFAULT VALUES
+    # --------------------------------------------------------
+
+    $Status = ""
+
+    $ActionRequired = ""
+
+    $EmailStatus = ""
+
+
+
+    # ========================================================
+    # SCENARIO 1
+    #
+    # MANAGER EXISTS
+    # MANAGEDBY IS EMPTY
+    #
+    # SEND EMAIL TO MANAGER
+    # ========================================================
+
+    if (
+        !(Test-IsEmpty $Manager) -and
+        (Test-IsEmpty $ManagedBy)
+    ) {
+
+
+        $Status = "Manager Action Required - ManagedBy Missing"
+
+        $ActionRequired = `
+            "Manager must confirm and document responsible owner"
+
+
+        Write-Log `
+            "Manager present but ManagedBy empty. Account: $Account | Manager: $Manager" `
+            "WARNING"
+
+
+
+        # ----------------------------------------------------
+        # IMPORTANT
+        #
+        # Your Excel file currently does NOT show a Manager
+        # Email column.
+        #
+        # We need to resolve Manager -> AD user -> Email.
+        # ----------------------------------------------------
+
+
+        $ManagerEmail = ""
+
+
+        try {
+
+            # Search AD by Display Name
+
+            $ManagerADUser = Get-ADUser `
+                -Filter "DisplayName -eq '$Manager'" `
+                -Properties Mail `
+                -ErrorAction Stop
+
+
+            if ($ManagerADUser) {
+
+                $ManagerEmail = $ManagerADUser.Mail
+
+            }
+
+        }
+
+        catch {
+
+            Write-Log `
+                "Unable to resolve manager from AD: $Manager" `
+                "WARNING"
+
+        }
+
+
+
+        # ----------------------------------------------------
+        # SEND EMAIL
+        # ----------------------------------------------------
+
+        $EmailStatus = Send-ManagerEmail `
+            -ManagerName $Manager `
+            -ManagerEmail $ManagerEmail `
+            -Account $Account `
+            -SamAccountName $SamAccountName `
+            -Description $Description `
+            -Notes $Notes
+
+    }
+
+
+
+    # ========================================================
+    # SCENARIO 2
+    #
+    # BOTH MANAGER AND MANAGEDBY ARE EMPTY
+    #
+    # MARK AS CYBER-NON-COMPLIANT
+    # ========================================================
+
+    elseif (
+        (Test-IsEmpty $Manager) -and
+        (Test-IsEmpty $ManagedBy)
+    ) {
+
+
+        $Status = `
+            "Cyber-Non-Compliant (no traceable ownership)"
+
+
+        $ActionRequired = `
+            "Immediate ownership remediation required"
+
+
+        $EmailStatus = "No Manager Available"
+
+
+        Write-Log `
+            "CYBER-NON-COMPLIANT: $Account | No Manager and no ManagedBy" `
+            "WARNING"
+
+    }
+
+
+
+    # ========================================================
+    # SCENARIO 3
+    #
+    # BOTH FIELDS ARE PRESENT
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $Manager) -and
+        !(Test-IsEmpty $ManagedBy)
+    ) {
+
+
+        # Direct comparison
+        # This can be enhanced later if ManagedBy is DN format.
+
+        if (
+            $Manager.Trim().ToLower() -eq
+            $ManagedBy.Trim().ToLower()
+        ) {
+
+            $Status = "Matched"
+
+            $ActionRequired = `
+                "Ownership validated"
+
+        }
+
+        else {
+
+            $Status = "Mismatched"
+
+            $ActionRequired = `
+                "Manual ownership review required"
+
+        }
+
+
+        $EmailStatus = "No Email Required"
+
+
+        Write-Log `
+            "Account: $Account | Status: $Status"
+
+    }
+
+
+
+    # ========================================================
+    # SCENARIO 4
+    #
+    # MANAGEDBY EXISTS
+    # MANAGER IS EMPTY
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $ManagedBy) -and
+        (Test-IsEmpty $Manager)
+    ) {
+
+
+        $Status = "ManagedBy Present - Manager Missing"
+
+        $ActionRequired = `
+            "Review Manager information"
+
+
+        $EmailStatus = "No Email Required"
+
+
+        Write-Log `
+            "ManagedBy present but Manager empty. Account: $Account"
+
+    }
+
+
+
+    # ========================================================
+    # CREATE RESULT OBJECT
+    # ========================================================
+
+    $FinalResults += [PSCustomObject]@{
+
+        Account = $Account
+
+        SamAccountName = $SamAccountName
+
+        AccountMail = $AccountMail
+
+        Manager = $Manager
+
+        ManagedBy = $ManagedBy
+
+        Status = $Status
+
+        ActionRequired = $ActionRequired
+
+        EmailStatus = $EmailStatus
+
+        Description = $Description
+
+        Notes = $Notes
+
+        NotesDataCurrent = $NotesDataCurrent
+
+        CyberArkSafes = $CyberArkSafes
+
+        SafeAccessGroupOwnerNames = $SafeOwnerNames
+
+        SafeAccessGroupOwnerAccounts = $SafeOwnerAccounts
+
+        SafeAccessGroupOwnerEmails = $SafeOwnerEmails
+
+        ProcessedDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    }
+
+}
+
+
+
+# ============================================================
+# EXPORT RESULT TO EXCEL
+# ============================================================
+
+$FinalResults | Export-Excel `
+    -Path $OutputFile `
+    -WorksheetName "Ownership Reconciliation" `
+    -AutoSize `
+    -BoldTopRow `
+    -FreezeTopRow `
+    -TableName "ServiceAccountOwnership"
+
+
+Write-Log "Processing completed successfully"
+
+Write-Log "Output report: $OutputFile"
+
+
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Green
+Write-Host "PROCESS COMPLETED"
+Write-Host "============================================" -ForegroundColor Green
+Write-Host "Total Processed Accounts: $($FinalResults.Count)"
+Write-Host "Output File: $OutputFile"
+Write-Host "Log File: $LogFile"
