@@ -1,52 +1,41 @@
 <#
 .SYNOPSIS
     Identifies service accounts in Active Directory that are missing Manager and/or
-    Notes (info) attributes, resolves the correct value from an Excel source file
-    (using the CyberArk Safe -> Safe Access Group Owner mapping), and updates AD.
+    Notes (info) attributes, resolves the correct value from a CSV source file, and
+    updates AD.
 
 .DESCRIPTION
-    Source of truth: an Excel export containing one row per service account, with
-    columns describing the account, its CyberArk Safe, and the Safe's access-group
-    owner (both as a display name and as a resolvable domain\samAccountName).
+    Source of truth: a CSV export containing one row per service account, with a
+    'Manager' column (the samAccountName or domain\samAccountName of the manager
+    to set) and a 'Notes' column (the free-text note to write).
 
     For every row where the AD account is actually missing Manager and/or Notes
-    (the Excel columns are only used to build the initial candidate list — the
+    (the CSV columns are only used to build the initial candidate list — the
     live AD attribute value is always re-checked before any write, so existing
     valid AD values are never overwritten):
 
         1. Verify the service account exists in AD.
-        2. Look up the CyberArk Safe for that account.
-        3. Look up the Safe's access-group owner (prefer the ready-made
-           "Safe Access Group Owner Accounts" column; fall back to resolving
-           the "Safe Access Group Owner Names" display name via Get-ADUser).
-        4. If exactly one owner resolves to exactly one AD user, use that user
-           as the new Manager. If Notes/info is also missing, build a short
-           descriptive note referencing the Safe and the owner.
-        5. Log every account processed (updated, skipped, or errored) with full
+        2. If Manager is missing in AD, take the CSV row's 'Manager' value and
+           resolve it to an AD user; use that user's DistinguishedName as the
+           new Manager.
+        3. If Notes/info is missing in AD, take the CSV row's 'Notes' value
+           verbatim as the new note.
+        4. Log every account processed (updated, skipped, or errored) with full
            before/after values to a CSV report.
 
     The script never writes to AD unless -Mode Update is passed. Even in Update
     mode, it is a native PowerShell ShouldProcess cmdlet, so -WhatIf and -Confirm
     both work normally on top of the built-in Report mode.
 
-.PARAMETER ExcelPath
-    Path to the source .xlsx file.
-
-.PARAMETER WorksheetName
-    Worksheet to read. Defaults to 'Sheet1'.
+.PARAMETER CsvPath
+    Path to the source .csv file.
 
 .PARAMETER Mode
     'Report'  (default) - analyze only, write the CSV report, change nothing in AD.
     'Update'  - after the same analysis, actually apply the changes to AD.
 
-.PARAMETER OwnerDelimiter
-    Delimiter used to split multi-value owner cells (some Safes have more than
-    one owner listed in a single cell). Defaults to ';'. Change to ',' only if
-    you are certain owner display names never contain a comma themselves
-    (this file's "Last, First" name format makes ',' unsafe as a delimiter).
-
 .PARAMETER NotesAttribute
-    Which AD attribute Excel's "Notes" concept should be written to.
+    Which AD attribute the CSV's "Notes" concept should be written to.
     IMPORTANT: In ADUC, the tab literally labelled "Notes" on a user object is
     backed by the LDAP attribute 'info' — NOT 'description' (Description is a
     separate, distinct field). Defaults to 'info'. Set to 'description' only if
@@ -74,25 +63,25 @@
 
 .EXAMPLE
     # Dry run / report only — always run this first.
-    .\Update-ServiceAccountManagerNotes.ps1 -ExcelPath 'C:\Data\AD-ServiceAccountFile.xlsx' -Mode Report
+    .\Update-ServiceAccountManagerNotes.ps1 -CsvPath 'C:\Data\AD-ServiceAccountFile.csv' -Mode Report
 
 .EXAMPLE
     # Report mode, explicitly targeting a specific domain controller:
-    .\Update-ServiceAccountManagerNotes.ps1 -ExcelPath 'C:\Data\AD-ServiceAccountFile.xlsx' -Mode Report -Server 'dc01.corp.contoso.com'
+    .\Update-ServiceAccountManagerNotes.ps1 -CsvPath 'C:\Data\AD-ServiceAccountFile.csv' -Mode Report -Server 'dc01.corp.contoso.com'
 
 .EXAMPLE
     # Review the CSV report from the run above, then apply the changes for real,
     # with an extra interactive confirmation prompt per account, using a
     # specific privileged account rather than your own logon:
-    .\Update-ServiceAccountManagerNotes.ps1 -ExcelPath 'C:\Data\AD-ServiceAccountFile.xlsx' -Mode Update -Confirm -Server 'dc01.corp.contoso.com' -Credential (Get-Credential)
+    .\Update-ServiceAccountManagerNotes.ps1 -CsvPath 'C:\Data\AD-ServiceAccountFile.csv' -Mode Update -Confirm -Server 'dc01.corp.contoso.com' -Credential (Get-Credential)
 
 .EXAMPLE
     # Apply changes but simulate them first via PowerShell's native -WhatIf
     # (prints what Set-ADUser WOULD do, without touching AD, even in Update mode):
-    .\Update-ServiceAccountManagerNotes.ps1 -ExcelPath 'C:\Data\AD-ServiceAccountFile.xlsx' -Mode Update -WhatIf
+    .\Update-ServiceAccountManagerNotes.ps1 -CsvPath 'C:\Data\AD-ServiceAccountFile.csv' -Mode Update -WhatIf
 
 .NOTES
-    Required modules  : ActiveDirectory (RSAT), ImportExcel (PowerShell Gallery)
+    Required modules  : ActiveDirectory (RSAT)
     Required rights    : Read access to AD; Write access to the Manager/Notes(info)
                           attributes of the target service account OUs.
     Tested pattern      : PowerShell 5.1 / 7.x
@@ -102,14 +91,10 @@
 param(
     [Parameter(Mandatory = $true)]
     [ValidateScript({ Test-Path $_ -PathType Leaf })]
-    [string]$ExcelPath,
-
-    [string]$WorksheetName = 'Sheet1',
+    [string]$CsvPath,
 
     [ValidateSet('Report', 'Update')]
     [string]$Mode = 'Report',
-
-    [string]$OwnerDelimiter = ';',
 
     [ValidateSet('info', 'description')]
     [string]$NotesAttribute = 'info',
@@ -131,39 +116,18 @@ if ($Server)     { $ADConnectionParams['Server']     = $Server }
 if ($Credential) { $ADConnectionParams['Credential'] = $Credential }
 
 #region ---------------------------------------------------------------------
-# COLUMN MAPPING - adjust here if your Excel headers differ, without touching
+# COLUMN MAPPING - adjust here if your CSV headers differ, without touching
 # any logic further down. These names must match the source file's headers
 # exactly (case-insensitive).
 #endregion --------------------------------------------------------------------
 $Col_ServiceAccount   = 'Samaccountname'                       # preferred unique key
 $Col_AccountFallback  = 'Account'                              # domain\sam, used if Samaccountname blank
-$Col_Manager          = 'Manager'
+$Col_Manager          = 'Manager'                               # source value for the new Manager
 $Col_ManagedBy        = 'ManagedBy'                             # reported only, never written
-$Col_Notes            = 'Notes'
-$Col_Safe             = 'CyberArk Safes'
-$Col_OwnerName        = 'Safe Access Group Owner Names'         # "Last, First" display name
-$Col_OwnerAccount     = 'Safe Access Group Owner Accounts'      # domain\samAccountName - preferred for resolution
+$Col_Notes            = 'Notes'                                 # source value for the new Notes/info
 
 $RequiredColumns = @(
-    $Col_ServiceAccount, $Col_AccountFallback, $Col_Manager, $Col_ManagedBy,
-    $Col_Notes, $Col_Safe, $Col_OwnerName, $Col_OwnerAccount
-)
-
-# This source file has a duplicate header ("AccountlsDisabled" appears twice),
-# which makes Import-Excel's automatic header detection fail. To make import
-# reliable regardless of that, headers are supplied explicitly, in the exact
-# column order of the known source file. If your file's column order differs,
-# update this array to match (order must mirror row 1 of the worksheet).
-$ExplicitHeaders = @(
-    'Account', 'Samaccountname', 'Mail', 'InteractiveLogon', 'InteractiveLogonGroup',
-    'AD LastLogon', 'AD PasswordLastSet', 'Logon Age', 'Password Age', 'Manager',
-    'ManagedBy', 'Notes', 'Notes Data Current', 'AccountlsDisabled', 'AccountlsDisabled2',
-    'Description', 'CyberArk Safes', 'Safe Access Groups', 'Safe Access Group Owner Names',
-    'Safe Access Group Owner Accounts', 'Safe Access Group Owner Emails',
-    'Safe Access Group Owner Notes', 'msds-cloudextensionattribute', 'extensionAttribute11',
-    'extensionAttribute7', 'department', 'given', 'givenName', 'sn',
-    'physicalDeliveryOfficeName', 'extensionAttribute12', 'extensionAttribute1',
-    'telephoneNumber', 'title', 'employeeType'
+    $Col_ServiceAccount, $Col_AccountFallback, $Col_Manager, $Col_ManagedBy, $Col_Notes
 )
 
 #region ---------------------------------------------------------------------
@@ -186,15 +150,13 @@ function Write-Log {
 }
 
 Write-Log "=== Service Account Manager/Notes Update - Mode: $Mode ==="
-Write-Log "Source file: $ExcelPath"
+Write-Log "Source file: $CsvPath"
 
-foreach ($mod in @('ActiveDirectory', 'ImportExcel')) {
-    if (-not (Get-Module -ListAvailable -Name $mod)) {
-        Write-Log "Required module '$mod' is not installed. Install it (e.g. 'Install-Module ImportExcel -Scope CurrentUser') and re-run." 'ERROR'
-        throw "Missing required module: $mod"
-    }
-    Import-Module $mod -ErrorAction Stop
+if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
+    Write-Log "Required module 'ActiveDirectory' is not installed. Install RSAT and re-run." 'ERROR'
+    throw "Missing required module: ActiveDirectory"
 }
+Import-Module ActiveDirectory -ErrorAction Stop
 
 #region ---------------------------------------------------------------------
 # AD CONNECTIVITY CHECK - confirms which domain/DC and which identity every
@@ -212,27 +174,27 @@ try {
     Write-Log "  Running as  : $whoAmI"
 }
 catch {
-    Write-Log "Could not contact Active Directory with the given -Server/-Credential. Aborting before reading Excel or touching any account." 'ERROR'
+    Write-Log "Could not contact Active Directory with the given -Server/-Credential. Aborting before reading the CSV or touching any account." 'ERROR'
     Write-Log "Underlying error: $($_.Exception.Message)" 'ERROR'
     throw
 }
 
 #region ---------------------------------------------------------------------
-# READ + VALIDATE EXCEL
+# READ + VALIDATE CSV
 #endregion --------------------------------------------------------------------
-Write-Log "Reading worksheet '$WorksheetName'..."
+Write-Log "Reading CSV '$CsvPath'..."
 try {
-    $rawRows = Import-Excel -Path $ExcelPath -WorksheetName $WorksheetName `
-                             -HeaderName $ExplicitHeaders -StartRow 2 -ErrorAction Stop
+    $rawRows = Import-Csv -Path $CsvPath -ErrorAction Stop
 }
 catch {
-    Write-Log "Failed to read Excel file: $($_.Exception.Message)" 'ERROR'
+    Write-Log "Failed to read CSV file: $($_.Exception.Message)" 'ERROR'
     throw
 }
 
-$missingCols = $RequiredColumns | Where-Object { $_ -notin $ExplicitHeaders }
+$csvHeaders  = if ($rawRows.Count -gt 0) { $rawRows[0].PSObject.Properties.Name } else { @() }
+$missingCols = $RequiredColumns | Where-Object { $_ -notin $csvHeaders }
 if ($missingCols) {
-    Write-Log "Excel file is missing required column(s): $($missingCols -join ', ')" 'ERROR'
+    Write-Log "CSV file is missing required column(s): $($missingCols -join ', ')" 'ERROR'
     throw "Required columns not found. Aborting before touching AD."
 }
 Write-Log "Loaded $($rawRows.Count) row(s) from source file."
@@ -250,76 +212,29 @@ function Get-CleanSamAccountName {
     return $RawValue.Trim()
 }
 
-function Resolve-SafeOwner {
+function Resolve-ManagerFromCsv {
     <#
-        Determines the single AD user responsible for a Safe, given the row's
-        owner-name and owner-account cell values. Returns a hashtable:
-          @{ Success = $true/$false; ADUser = <ADUser or $null>;
-             Reason  = <string, only when Success = $false>;
-             OwnerRawNames = <string used for logging> }
-        Handles: missing owner, multiple owners, unresolvable owner.
+        Resolves the CSV row's raw Manager value (samAccountName or
+        domain\samAccountName) to an AD user. Returns a hashtable:
+          @{ Success = $true/$false; ADUser = <ADUser or $null>; Reason = <string, only when Success = $false> }
     #>
     param(
-        [string]$OwnerNamesRaw,
-        [string]$OwnerAccountsRaw,
-        [string]$Delimiter,
+        [string]$ManagerRaw,
         [hashtable]$ADConnectionParams = @{}
     )
 
-    if ([string]::IsNullOrWhiteSpace($OwnerNamesRaw) -and [string]::IsNullOrWhiteSpace($OwnerAccountsRaw)) {
-        return @{ Success = $false; ADUser = $null; Reason = 'Owner missing on source row'; OwnerRawNames = $null }
+    if ([string]::IsNullOrWhiteSpace($ManagerRaw)) {
+        return @{ Success = $false; ADUser = $null; Reason = 'Manager missing in AD and no Manager value provided in CSV source row' }
     }
 
-    # Prefer the ready-made account column: it is already an AD-resolvable identity
-    # (domain\samAccountName) and avoids ambiguous display-name matching.
-    $accountTokens = @()
-    if (-not [string]::IsNullOrWhiteSpace($OwnerAccountsRaw)) {
-        $accountTokens = $OwnerAccountsRaw -split [regex]::Escape($Delimiter) |
-                         ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
-    }
-
-    if ($accountTokens.Count -gt 1) {
-        return @{ Success = $false; ADUser = $null; Reason = "Multiple owners found ($($accountTokens -join ', '))"; OwnerRawNames = $OwnerNamesRaw }
-    }
-
-    if ($accountTokens.Count -eq 1) {
-        $sam = Get-CleanSamAccountName -RawValue $accountTokens[0]
-        try {
-            $u = Get-ADUser -Identity $sam -Properties DistinguishedName @ADConnectionParams -ErrorAction Stop
-            return @{ Success = $true; ADUser = $u; Reason = $null; OwnerRawNames = $OwnerNamesRaw }
-        }
-        catch {
-            return @{ Success = $false; ADUser = $null; Reason = "Owner account '$sam' could not be resolved in AD ($($_.Exception.Message))"; OwnerRawNames = $OwnerNamesRaw }
-        }
-    }
-
-    # Fallback: no usable Owner Accounts value - try resolving the display name instead.
-    $nameTokens = $OwnerNamesRaw -split [regex]::Escape($Delimiter) |
-                  ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
-
-    if ($nameTokens.Count -eq 0) {
-        return @{ Success = $false; ADUser = $null; Reason = 'Owner missing on source row'; OwnerRawNames = $OwnerNamesRaw }
-    }
-    if ($nameTokens.Count -gt 1) {
-        return @{ Success = $false; ADUser = $null; Reason = "Multiple owners found ($($nameTokens -join ', '))"; OwnerRawNames = $OwnerNamesRaw }
-    }
-
-    $displayName = $nameTokens[0]
+    $sam = Get-CleanSamAccountName -RawValue $ManagerRaw
     try {
-        $matches = @(Get-ADUser -Filter "DisplayName -eq '$displayName'" -Properties DistinguishedName @ADConnectionParams -ErrorAction Stop)
+        $u = Get-ADUser -Identity $sam -Properties DistinguishedName @ADConnectionParams -ErrorAction Stop
+        return @{ Success = $true; ADUser = $u; Reason = $null }
     }
     catch {
-        return @{ Success = $false; ADUser = $null; Reason = "AD lookup by display name failed: $($_.Exception.Message)"; OwnerRawNames = $OwnerNamesRaw }
+        return @{ Success = $false; ADUser = $null; Reason = "Manager '$sam' from CSV could not be resolved in AD ($($_.Exception.Message))" }
     }
-
-    if ($matches.Count -eq 0) {
-        return @{ Success = $false; ADUser = $null; Reason = "Owner '$displayName' could not be matched to any AD user"; OwnerRawNames = $OwnerNamesRaw }
-    }
-    if ($matches.Count -gt 1) {
-        return @{ Success = $false; ADUser = $null; Reason = "Owner '$displayName' matched multiple AD users - manual resolution required"; OwnerRawNames = $OwnerNamesRaw }
-    }
-
-    return @{ Success = $true; ADUser = $matches[0]; Reason = $null; OwnerRawNames = $OwnerNamesRaw }
 }
 
 #region ---------------------------------------------------------------------
@@ -341,8 +256,8 @@ foreach ($row in $rawRows) {
     $entry = [ordered]@{
         RowNumber              = $rowNum
         ServiceAccount          = $samAccountName
-        CyberArkSafe            = $row.$Col_Safe
-        SafeAccessGroupOwner    = $row.$Col_OwnerName
+        SourceManager            = $row.$Col_Manager
+        SourceNotes              = $row.$Col_Notes
         ExistingAD_Manager      = $null
         ExistingAD_ManagedBy    = $null
         ExistingAD_Notes        = $null
@@ -385,36 +300,34 @@ foreach ($row in $rawRows) {
         continue
     }
 
-    # --- Safe / owner lookup (only needed if something is actually missing) ---
-    if ([string]::IsNullOrWhiteSpace($row.$Col_Safe)) {
-        $entry.UpdateStatus = 'Error'
-        $entry.ErrorReason  = 'CyberArk Safe is missing on source row'
-        Write-Log "$samAccountName - $($entry.ErrorReason)" 'WARN'
-        $results.Add([PSCustomObject]$entry)
-        continue
-    }
-
-    $ownerResult = Resolve-SafeOwner -OwnerNamesRaw $row.$Col_OwnerName `
-                                      -OwnerAccountsRaw $row.$Col_OwnerAccount `
-                                      -Delimiter $OwnerDelimiter `
-                                      -ADConnectionParams $ADConnectionParams
-
-    if (-not $ownerResult.Success) {
-        $entry.UpdateStatus = 'Error'
-        $entry.ErrorReason  = $ownerResult.Reason
-        Write-Log "$samAccountName - $($entry.ErrorReason)" 'WARN'
-        $results.Add([PSCustomObject]$entry)
-        continue
-    }
-
-    $ownerUser = $ownerResult.ADUser
-
     # --- Build the proposed new values (only for whichever attribute is actually missing) ---
+    $rowErrors = @()
+
     if ($managerMissingInAD) {
-        $entry.New_Manager = $ownerUser.DistinguishedName
+        $managerResult = Resolve-ManagerFromCsv -ManagerRaw $row.$Col_Manager -ADConnectionParams $ADConnectionParams
+        if ($managerResult.Success) {
+            $entry.New_Manager = $managerResult.ADUser.DistinguishedName
+        }
+        else {
+            $rowErrors += $managerResult.Reason
+        }
     }
+
     if ($notesMissingInAD) {
-        $entry.New_Notes = "Managed via CyberArk Safe '$($row.$Col_Safe)' - responsible owner: $($row.$Col_OwnerName) (auto-populated $(Get-Date -Format 'yyyy-MM-dd'))"
+        if ([string]::IsNullOrWhiteSpace($row.$Col_Notes)) {
+            $rowErrors += 'Notes missing in AD and no Notes value provided in CSV source row'
+        }
+        else {
+            $entry.New_Notes = $row.$Col_Notes
+        }
+    }
+
+    if ($rowErrors.Count -gt 0) {
+        $entry.UpdateStatus = 'Error'
+        $entry.ErrorReason  = $rowErrors -join '; '
+        Write-Log "$samAccountName - $($entry.ErrorReason)" 'WARN'
+        $results.Add([PSCustomObject]$entry)
+        continue
     }
 
     $entry.UpdateStatus = if ($Mode -eq 'Report') { 'Proposed (Report mode)' } else { 'Pending Update' }
@@ -436,7 +349,7 @@ if ($Mode -eq 'Update') {
 
         $target = "AD account '$($entry.ServiceAccount)'"
         $action = @()
-        if ($entry.New_Manager) { $action += "Manager -> $($entry.SafeAccessGroupOwner)" }
+        if ($entry.New_Manager) { $action += "Manager -> $($entry.SourceManager)" }
         if ($entry.New_Notes)   { $action += "Notes/$NotesAttribute -> '$($entry.New_Notes)'" }
 
         if ($PSCmdlet.ShouldProcess($target, ($action -join '; '))) {
