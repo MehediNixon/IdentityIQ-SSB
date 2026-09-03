@@ -1,0 +1,478 @@
+```powershell
+# ============================================================
+# AD SERVICE ACCOUNT OWNERSHIP RECONCILIATION
+# NO EMAIL NOTIFICATIONS - FLAGGING ONLY
+# ============================================================
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+$InputFile = "C:\Reports\AD-ServiceAccountFile.xlsx"
+
+$OutputFile = "C:\Reports\AD-ServiceAccountFile_Result.xlsx"
+
+$LogFile = "C:\Reports\AD-ServiceAccountFile_Log.txt"
+
+
+# ============================================================
+# IMPORT EXCEL MODULE
+# ============================================================
+
+try {
+    Import-Module ImportExcel -ErrorAction Stop
+}
+catch {
+    Write-Host "ERROR: ImportExcel module is not installed." -ForegroundColor Red
+    Write-Host "Run: Install-Module ImportExcel -Scope CurrentUser"
+    exit
+}
+
+
+# ============================================================
+# LOG FUNCTION
+# ============================================================
+
+function Write-Log {
+
+    param(
+        [string]$Message,
+        [string]$Level = "INFO"
+    )
+
+    $TimeStamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    $LogMessage = "$TimeStamp [$Level] $Message"
+
+    Write-Host $LogMessage
+
+    Add-Content -Path $LogFile -Value $LogMessage
+}
+
+
+# ============================================================
+# CHECK IF VALUE IS EMPTY
+# ============================================================
+
+function Test-IsEmpty {
+
+    param(
+        $Value
+    )
+
+    return [string]::IsNullOrWhiteSpace([string]$Value)
+}
+
+
+# ============================================================
+# VALIDATE INPUT FILE
+# ============================================================
+
+if (!(Test-Path $InputFile)) {
+
+    Write-Host "ERROR: Input file not found:" -ForegroundColor Red
+    Write-Host $InputFile
+
+    exit
+}
+
+
+Write-Log "Starting Service Account Ownership Reconciliation"
+
+
+# ============================================================
+# IMPORT EXCEL FILE
+# ============================================================
+
+try {
+
+    $Records = Import-Excel -Path $InputFile
+
+    Write-Log "Total rows read: $($Records.Count)"
+
+}
+catch {
+
+    Write-Log "Failed to read Excel file: $($_.Exception.Message)" "ERROR"
+
+    exit
+}
+
+
+# ============================================================
+# RESULT COLLECTION
+# ============================================================
+
+$FinalResults = @()
+
+
+# Counters
+
+$TotalProcessed = 0
+
+$MatchedCount = 0
+
+$MismatchedCount = 0
+
+$ManagedByMissingCount = 0
+
+$NonCompliantCount = 0
+
+$ManagerMissingCount = 0
+
+$SkippedCount = 0
+
+
+# ============================================================
+# PROCESS EACH RECORD
+# ============================================================
+
+foreach ($Record in $Records) {
+
+
+    # --------------------------------------------------------
+    # READ COLUMNS FROM EXCEL
+    # --------------------------------------------------------
+
+    $Account = $Record.Account
+
+    $SamAccountName = $Record.Samaccountname
+
+    $AccountMail = $Record.Mail
+
+    $Manager = $Record.Manager
+
+    $ManagedBy = $Record.ManagedBy
+
+    $Notes = $Record.Notes
+
+    $NotesDataCurrent = $Record.'Notes Data Current'
+
+    $Description = $Record.Description
+
+    $SafeOwnerNames = $Record.'Safe Access Group Owner Names'
+
+    $SafeOwnerAccounts = $Record.'Safe Access Group Owner Accounts'
+
+    $SafeOwnerEmails = $Record.'Safe Access Group Owner Emails'
+
+    $CyberArkSafes = $Record.'CyberArk Safes'
+
+
+    # ========================================================
+    # SKIP COMPLETELY EMPTY ROWS
+    # ========================================================
+
+    if (
+        (Test-IsEmpty $Account) -and
+        (Test-IsEmpty $SamAccountName)
+    ) {
+
+        $SkippedCount++
+
+        continue
+    }
+
+
+    $TotalProcessed++
+
+
+    Write-Log "Processing Account: $Account | SamAccountName: $SamAccountName"
+
+
+    # ========================================================
+    # DEFAULT VALUES
+    # ========================================================
+
+    $Status = ""
+
+    $Flag = ""
+
+    $ActionRequired = ""
+
+
+    # ========================================================
+    # SCENARIO 1
+    #
+    # MANAGER EXISTS
+    # MANAGEDBY IS EMPTY
+    # ========================================================
+
+    if (
+        !(Test-IsEmpty $Manager) -and
+        (Test-IsEmpty $ManagedBy)
+    ) {
+
+        $Status = "FLAGGED"
+
+        $Flag = "ManagedBy Missing - Manager Available"
+
+        $ActionRequired = "Manager must confirm or assign a responsible owner"
+
+        $ManagedByMissingCount++
+
+
+        Write-Log `
+            "FLAGGED: $Account | Manager exists but ManagedBy is empty" `
+            "WARNING"
+
+    }
+
+
+    # ========================================================
+    # SCENARIO 2
+    #
+    # BOTH MANAGER AND MANAGEDBY ARE EMPTY
+    # ========================================================
+
+    elseif (
+        (Test-IsEmpty $Manager) -and
+        (Test-IsEmpty $ManagedBy)
+    ) {
+
+        $Status = "Non-Cyber-Compliant"
+
+        $Flag = "No Traceable Ownership"
+
+        $ActionRequired = "Immediate ownership remediation required"
+
+        $NonCompliantCount++
+
+
+        Write-Log `
+            "NON-CYBER-COMPLIANT: $Account | Both Manager and ManagedBy are empty" `
+            "WARNING"
+
+    }
+
+
+    # ========================================================
+    # SCENARIO 3
+    #
+    # BOTH MANAGER AND MANAGEDBY EXIST
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $Manager) -and
+        !(Test-IsEmpty $ManagedBy)
+    ) {
+
+
+        # ----------------------------------------------------
+        # NORMALIZE VALUES
+        # ----------------------------------------------------
+
+        $NormalizedManager = $Manager.ToString().Trim().ToLower()
+
+        $NormalizedManagedBy = $ManagedBy.ToString().Trim().ToLower()
+
+
+        # ----------------------------------------------------
+        # COMPARE
+        # ----------------------------------------------------
+
+        if ($NormalizedManager -eq $NormalizedManagedBy) {
+
+            $Status = "Matched"
+
+            $Flag = "No Flag"
+
+            $ActionRequired = "Ownership validated"
+
+            $MatchedCount++
+
+
+            Write-Log "MATCHED: $Account"
+
+        }
+        else {
+
+            $Status = "Mismatched"
+
+            $Flag = "Ownership Discrepancy"
+
+            $ActionRequired = "Manual review required"
+
+            $MismatchedCount++
+
+
+            Write-Log `
+                "MISMATCHED: $Account | Manager and ManagedBy values differ" `
+                "WARNING"
+
+        }
+
+    }
+
+
+    # ========================================================
+    # SCENARIO 4
+    #
+    # MANAGEDBY EXISTS
+    # MANAGER IS EMPTY
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $ManagedBy) -and
+        (Test-IsEmpty $Manager)
+    ) {
+
+        $Status = "FLAGGED"
+
+        $Flag = "Manager Missing - ManagedBy Available"
+
+        $ActionRequired = "Review and update Manager information"
+
+        $ManagerMissingCount++
+
+
+        Write-Log `
+            "FLAGGED: $Account | ManagedBy exists but Manager is empty" `
+            "WARNING"
+
+    }
+
+
+    # ========================================================
+    # CREATE OUTPUT RECORD
+    # ========================================================
+
+    $FinalResults += [PSCustomObject]@{
+
+        Account = $Account
+
+        SamAccountName = $SamAccountName
+
+        AccountMail = $AccountMail
+
+        Manager = $Manager
+
+        ManagedBy = $ManagedBy
+
+        Status = $Status
+
+        Flag = $Flag
+
+        ActionRequired = $ActionRequired
+
+        Description = $Description
+
+        Notes = $Notes
+
+        NotesDataCurrent = $NotesDataCurrent
+
+        CyberArkSafes = $CyberArkSafes
+
+        SafeAccessGroupOwnerNames = $SafeOwnerNames
+
+        SafeAccessGroupOwnerAccounts = $SafeOwnerAccounts
+
+        SafeAccessGroupOwnerEmails = $SafeOwnerEmails
+
+        ProcessedDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    }
+
+}
+
+
+# ============================================================
+# EXPORT MAIN RESULT
+# ============================================================
+
+try {
+
+    $FinalResults | Export-Excel `
+        -Path $OutputFile `
+        -WorksheetName "Ownership Reconciliation" `
+        -AutoSize `
+        -BoldTopRow `
+        -FreezeTopRow `
+        -TableName "ServiceAccountOwnership" `
+        -ClearSheet
+
+
+    Write-Log "Main output file created successfully: $OutputFile"
+
+}
+catch {
+
+    Write-Log "Failed to create output Excel file: $($_.Exception.Message)" "ERROR"
+
+}
+
+
+# ============================================================
+# CREATE NON-COMPLIANT REPORT
+# ============================================================
+
+$NonCompliantFile = "C:\Reports\NonCyberCompliant_Accounts.xlsx"
+
+
+$NonCompliantAccounts = $FinalResults | Where-Object {
+
+    $_.Status -eq "Non-Cyber-Compliant"
+
+}
+
+
+if ($NonCompliantAccounts.Count -gt 0) {
+
+    $NonCompliantAccounts | Export-Excel `
+        -Path $NonCompliantFile `
+        -WorksheetName "Non-Compliant Accounts" `
+        -AutoSize `
+        -BoldTopRow `
+        -FreezeTopRow `
+        -TableName "NonCyberCompliantAccounts"
+
+
+    Write-Log `
+        "Non-Compliant report created: $NonCompliantFile"
+
+}
+
+
+# ============================================================
+# DISPLAY SUMMARY
+# ============================================================
+
+Write-Host ""
+Write-Host "===================================================="
+Write-Host "SERVICE ACCOUNT OWNERSHIP RECONCILIATION COMPLETED"
+Write-Host "===================================================="
+Write-Host ""
+
+Write-Host "Total Processed: $TotalProcessed"
+
+Write-Host "Matched: $MatchedCount"
+
+Write-Host "Mismatched: $MismatchedCount"
+
+Write-Host "ManagedBy Missing (Manager Available): $ManagedByMissingCount"
+
+Write-Host "Manager Missing (ManagedBy Available): $ManagerMissingCount"
+
+Write-Host "Non-Cyber-Compliant: $NonCompliantCount"
+
+Write-Host "Skipped Empty Rows: $SkippedCount"
+
+Write-Host ""
+
+Write-Host "Main Output File:"
+Write-Host $OutputFile
+
+Write-Host ""
+
+Write-Host "Non-Compliant Report:"
+Write-Host $NonCompliantFile
+
+Write-Host ""
+
+Write-Host "Log File:"
+Write-Host $LogFile
+
+Write-Host ""
+Write-Host "PROCESS COMPLETED SUCCESSFULLY"
+```
