@@ -1,0 +1,62 @@
+How to Run the PowerShell Service Account Ownership Script
+Step 1: Save the PowerShell Script
+Open Notepad or Visual Studio Code, paste the PowerShell script, and save it as:
+C:\Scripts\ServiceAccountOwnership.ps1
+Make sure the file extension is .ps1 and not .txt.
+Step 2: Create Required Folders
+Open PowerShell and run:
+New-Item -ItemType Directory -Path C:\Scripts -Force
+New-Item -ItemType Directory -Path C:\Reports -Force
+Step 3: Place the Input Excel File
+Copy the Excel report into the following location and ensure the name matches the script configuration:
+C:\Reports\AD-ServiceAccountFile.xlsx
+Step 4: Install the ImportExcel Module
+Open PowerShell and run:
+Install-Module ImportExcel -Scope CurrentUser
+If prompted to install the NuGet provider or trust PSGallery, enter Y.
+Verify the module installation:
+Get-Module ImportExcel -ListAvailable
+Step 5: Check the Active Directory Module
+The script uses Get-ADUser to resolve manager information. Check whether the Active Directory PowerShell module is available:
+Get-Module ActiveDirectory -ListAvailable
+If available, test importing it:
+Import-Module ActiveDirectory
+If the module is not installed, RSAT/Active Directory PowerShell tools may need to be installed by your IT administrator.
+Step 6: Check Script Execution Policy
+Run:
+Get-ExecutionPolicy
+If scripts are blocked, use the following command. This applies only to the current PowerShell window:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+Step 7: Run the Script
+Navigate to the script folder:
+cd C:\Scripts
+Run the script:
+.\ServiceAccountOwnership.ps1
+Alternative command:
+powershell.exe -ExecutionPolicy Bypass -File "C:\Scripts\ServiceAccountOwnership.ps1"
+Step 8: Run in Test Mode First
+Before enabling production email notifications, ensure the script contains:
+$TestMode = $true
+In test mode, the script processes the accounts and generates results but does not send actual emails.
+Step 9: Check the Output
+After successful execution, check:
+C:\Reports\AD-ServiceAccountFile_Result.xlsx
+C:\Reports\AD-ServiceAccountFile_Log.txt
+Common Errors
+Error: Running scripts is disabled
+Run:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+Error: Import-Excel is not recognized
+Run:
+Install-Module ImportExcel -Scope CurrentUser -Force
+Recommended Testing Order
+1.	Keep $TestMode = $true.
+2.	Confirm the Excel file path is correct.
+3.	Confirm the ImportExcel module is installed.
+4.	Confirm the Active Directory module is available.
+5.	Run the script.
+6.	Review the output Excel file and log file.
+7.	Validate the Manager and ManagedBy results.
+8.	Only after validation, configure SMTP and change $TestMode = $false.
+Important Production Note
+Do not enable real email sending until the Manager-to-email lookup is validated. If the Manager column contains only display names, a display-name lookup can return the wrong person when duplicate names exist.
