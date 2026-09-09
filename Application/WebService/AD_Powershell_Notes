@@ -4,7 +4,6 @@
 # NO EMAIL NOTIFICATIONS - FLAGGING ONLY
 # ============================================================
 
-
 # ============================================================
 # CONFIGURATION
 # ============================================================
@@ -12,6 +11,8 @@
 $InputFile = "C:\Reports\AD-ServiceAccountFile.xlsx"
 
 $OutputFile = "C:\Reports\AD-ServiceAccountFile_Result.xlsx"
+
+$NonCompliantFile = "C:\Reports\NonCyberCompliant_Accounts.xlsx"
 
 $LogFile = "C:\Reports\AD-ServiceAccountFile_Log.txt"
 
@@ -107,20 +108,16 @@ catch {
 $FinalResults = @()
 
 
-# Counters
+# ============================================================
+# COUNTERS
+# ============================================================
 
 $TotalProcessed = 0
-
-$MatchedCount = 0
-
-$MismatchedCount = 0
-
-$ManagedByMissingCount = 0
-
+$OwnerIdentifiedCount = 0
+$ManagedByConfirmationCount = 0
+$ManagerConfirmationCount = 0
 $NonCompliantCount = 0
-
-$ManagerMissingCount = 0
-
+$ManagerManagedByConfirmationCount = 0
 $SkippedCount = 0
 
 
@@ -129,7 +126,6 @@ $SkippedCount = 0
 # ============================================================
 
 foreach ($Record in $Records) {
-
 
     # --------------------------------------------------------
     # READ COLUMNS FROM EXCEL
@@ -193,40 +189,135 @@ foreach ($Record in $Records) {
 
 
     # ========================================================
-    # SCENARIO 1
+    # SCENARIO 5
     #
-    # MANAGER EXISTS
-    # MANAGEDBY IS EMPTY
+    # NOTES EMPTY
+    # MANAGER / MANAGEDBY CANNOT BE TRUSTED
+    #
+    # Notes = Empty
     # ========================================================
 
-    if (
-        !(Test-IsEmpty $Manager) -and
-        (Test-IsEmpty $ManagedBy)
-    ) {
+    if (Test-IsEmpty $Notes) {
 
         $Status = "FLAGGED"
 
-        $Flag = "ManagedBy Missing - Manager Available"
+        $Flag = "Notes Missing"
 
-        $ActionRequired = "Manager must confirm or assign a responsible owner"
+        $ActionRequired = "Manager and ManagedBy need to confirm ownership"
 
-        $ManagedByMissingCount++
+        $ManagerManagedByConfirmationCount++
 
 
         Write-Log `
-            "FLAGGED: $Account | Manager exists but ManagedBy is empty" `
+            "FLAGGED: $Account | Notes empty - Manager and ManagedBy need to confirm ownership" `
             "WARNING"
+    }
 
+
+    # ========================================================
+    # SCENARIO 1
+    #
+    # NOTES AVAILABLE
+    # MANAGER AVAILABLE
+    # MANAGEDBY AVAILABLE
+    #
+    # OWNER IDENTIFIED
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $Notes) -and
+        !(Test-IsEmpty $Manager) -and
+        !(Test-IsEmpty $ManagedBy)
+    ) {
+
+        $Status = "Owner Identified"
+
+        $Flag = "No Flag"
+
+        $ActionRequired = "Owner identified - no further action required"
+
+        $OwnerIdentifiedCount++
+
+
+        Write-Log `
+            "OWNER IDENTIFIED: $Account | Notes, Manager and ManagedBy are available"
     }
 
 
     # ========================================================
     # SCENARIO 2
     #
-    # BOTH MANAGER AND MANAGEDBY ARE EMPTY
+    # NOTES AVAILABLE
+    # MANAGER AVAILABLE
+    # MANAGEDBY MISSING
+    #
+    # NEED TO CONFIRM MANAGEDBY
     # ========================================================
 
     elseif (
+        !(Test-IsEmpty $Notes) -and
+        !(Test-IsEmpty $Manager) -and
+        (Test-IsEmpty $ManagedBy)
+    ) {
+
+        $Status = "FLAGGED"
+
+        $Flag = "ManagedBy Missing"
+
+        $ActionRequired = "Need to confirm ManagedBy"
+
+        $ManagedByConfirmationCount++
+
+
+        Write-Log `
+            "FLAGGED: $Account | Notes and Manager available but ManagedBy is missing" `
+            "WARNING"
+    }
+
+
+    # ========================================================
+    # SCENARIO 3
+    #
+    # NOTES AVAILABLE
+    # MANAGER MISSING
+    # MANAGEDBY AVAILABLE
+    #
+    # MANAGER NEEDS TO CONFIRM
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $Notes) -and
+        (Test-IsEmpty $Manager) -and
+        !(Test-IsEmpty $ManagedBy)
+    ) {
+
+        $Status = "FLAGGED"
+
+        $Flag = "Manager Missing"
+
+        $ActionRequired = "Manager needs to confirm ownership"
+
+        $ManagerConfirmationCount++
+
+
+        Write-Log `
+            "FLAGGED: $Account | Notes and ManagedBy available but Manager is missing" `
+            "WARNING"
+    }
+
+
+    # ========================================================
+    # SCENARIO 4
+    #
+    # NOTES AVAILABLE
+    # MANAGER MISSING
+    # MANAGEDBY MISSING
+    #
+    # NON-COMPLIANT
+    # ========================================================
+
+    elseif (
+        !(Test-IsEmpty $Notes) -and
         (Test-IsEmpty $Manager) -and
         (Test-IsEmpty $ManagedBy)
     ) {
@@ -241,96 +332,8 @@ foreach ($Record in $Records) {
 
 
         Write-Log `
-            "NON-CYBER-COMPLIANT: $Account | Both Manager and ManagedBy are empty" `
+            "NON-CYBER-COMPLIANT: $Account | Notes available but Manager and ManagedBy are empty" `
             "WARNING"
-
-    }
-
-
-    # ========================================================
-    # SCENARIO 3
-    #
-    # BOTH MANAGER AND MANAGEDBY EXIST
-    # ========================================================
-
-    elseif (
-        !(Test-IsEmpty $Manager) -and
-        !(Test-IsEmpty $ManagedBy)
-    ) {
-
-
-        # ----------------------------------------------------
-        # NORMALIZE VALUES
-        # ----------------------------------------------------
-
-        $NormalizedManager = $Manager.ToString().Trim().ToLower()
-
-        $NormalizedManagedBy = $ManagedBy.ToString().Trim().ToLower()
-
-
-        # ----------------------------------------------------
-        # COMPARE
-        # ----------------------------------------------------
-
-        if ($NormalizedManager -eq $NormalizedManagedBy) {
-
-            $Status = "Matched"
-
-            $Flag = "No Flag"
-
-            $ActionRequired = "Ownership validated"
-
-            $MatchedCount++
-
-
-            Write-Log "MATCHED: $Account"
-
-        }
-        else {
-
-            $Status = "Mismatched"
-
-            $Flag = "Ownership Discrepancy"
-
-            $ActionRequired = "Manual review required"
-
-            $MismatchedCount++
-
-
-            Write-Log `
-                "MISMATCHED: $Account | Manager and ManagedBy values differ" `
-                "WARNING"
-
-        }
-
-    }
-
-
-    # ========================================================
-    # SCENARIO 4
-    #
-    # MANAGEDBY EXISTS
-    # MANAGER IS EMPTY
-    # ========================================================
-
-    elseif (
-        !(Test-IsEmpty $ManagedBy) -and
-        (Test-IsEmpty $Manager)
-    ) {
-
-        $Status = "FLAGGED"
-
-        $Flag = "Manager Missing - ManagedBy Available"
-
-        $ActionRequired = "Review and update Manager information"
-
-        $ManagerMissingCount++
-
-
-        Write-Log `
-            "FLAGGED: $Account | ManagedBy exists but Manager is empty" `
-            "WARNING"
-
     }
 
 
@@ -350,6 +353,10 @@ foreach ($Record in $Records) {
 
         ManagedBy = $ManagedBy
 
+        Notes = $Notes
+
+        NotesDataCurrent = $NotesDataCurrent
+
         Status = $Status
 
         Flag = $Flag
@@ -357,10 +364,6 @@ foreach ($Record in $Records) {
         ActionRequired = $ActionRequired
 
         Description = $Description
-
-        Notes = $Notes
-
-        NotesDataCurrent = $NotesDataCurrent
 
         CyberArkSafes = $CyberArkSafes
 
@@ -371,7 +374,6 @@ foreach ($Record in $Records) {
         SafeAccessGroupOwnerEmails = $SafeOwnerEmails
 
         ProcessedDate = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
     }
 
 }
@@ -398,17 +400,15 @@ try {
 }
 catch {
 
-    Write-Log "Failed to create output Excel file: $($_.Exception.Message)" "ERROR"
-
+    Write-Log `
+        "Failed to create output Excel file: $($_.Exception.Message)" `
+        "ERROR"
 }
 
 
 # ============================================================
 # CREATE NON-COMPLIANT REPORT
 # ============================================================
-
-$NonCompliantFile = "C:\Reports\NonCyberCompliant_Accounts.xlsx"
-
 
 $NonCompliantAccounts = $FinalResults | Where-Object {
 
@@ -419,18 +419,32 @@ $NonCompliantAccounts = $FinalResults | Where-Object {
 
 if ($NonCompliantAccounts.Count -gt 0) {
 
-    $NonCompliantAccounts | Export-Excel `
-        -Path $NonCompliantFile `
-        -WorksheetName "Non-Compliant Accounts" `
-        -AutoSize `
-        -BoldTopRow `
-        -FreezeTopRow `
-        -TableName "NonCyberCompliantAccounts"
+    try {
+
+        $NonCompliantAccounts | Export-Excel `
+            -Path $NonCompliantFile `
+            -WorksheetName "Non-Compliant Accounts" `
+            -AutoSize `
+            -BoldTopRow `
+            -FreezeTopRow `
+            -TableName "NonCyberCompliantAccounts" `
+            -ClearSheet
 
 
-    Write-Log `
-        "Non-Compliant report created: $NonCompliantFile"
+        Write-Log `
+            "Non-Compliant report created: $NonCompliantFile"
+    }
+    catch {
 
+        Write-Log `
+            "Failed to create Non-Compliant report: $($_.Exception.Message)" `
+            "ERROR"
+    }
+
+}
+else {
+
+    Write-Log "No Non-Compliant accounts found."
 }
 
 
@@ -446,13 +460,13 @@ Write-Host ""
 
 Write-Host "Total Processed: $TotalProcessed"
 
-Write-Host "Matched: $MatchedCount"
+Write-Host "Owner Identified: $OwnerIdentifiedCount"
 
-Write-Host "Mismatched: $MismatchedCount"
+Write-Host "ManagedBy Needs Confirmation: $ManagedByConfirmationCount"
 
-Write-Host "ManagedBy Missing (Manager Available): $ManagedByMissingCount"
+Write-Host "Manager Needs Confirmation: $ManagerConfirmationCount"
 
-Write-Host "Manager Missing (ManagedBy Available): $ManagerMissingCount"
+Write-Host "Manager and ManagedBy Need Confirmation: $ManagerManagedByConfirmationCount"
 
 Write-Host "Non-Cyber-Compliant: $NonCompliantCount"
 
@@ -474,5 +488,6 @@ Write-Host "Log File:"
 Write-Host $LogFile
 
 Write-Host ""
+
 Write-Host "PROCESS COMPLETED SUCCESSFULLY"
 ```
