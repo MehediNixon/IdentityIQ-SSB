@@ -1,0 +1,991 @@
+Service Account Compliance Communication Automation Solution 
+
+Purpose: Define the proposed Microsoft 365 solution for notifying service account owners, collecting standardized remediation responses, tracking three communication notices per account, and producing auditable status evidence. 
+
+Recommendation: Use one SharePoint master list record per service account, a Power Apps customized form as the response overlay, and scheduled Power Automate flows for initial notice, reminders, escalation, and status updates. Treat the submitted form and recorded send timestamps as the authoritative evidence. Read receipts may be requested as supplemental evidence, but they are not reliable proof of acknowledgment. 
+
+Solution Summary 
+
+The solution creates a single operational record for every noncompliant service account. Each email contains a secure link that opens the corresponding account record in a guided Power Apps form. The owner confirms ownership, acknowledges the deficiency, provides the remediation plan and date, and records any exception or dependency. Power Automate writes each successful communication back to the same account record, including separate checkboxes and timestamps for Notice 1, Notice 2, and Notice 3. 
+
+A daily scheduled flow evaluates unresolved records against stored due dates and sends only the next eligible notice. This avoids duplicate messages, preserves the exact history by account, and provides leadership reporting without reconciling email logs manually. 
+
+Expected Outcomes 
+
+One authoritative record per service account from identification through remediation or enforcement. 
+
+Standardized owner responses with conditional questions and required evidence. 
+
+Automated initial notice, reminder, escalation, and enforcement warning based on configurable dates. 
+
+Notice 1, Notice 2, and Notice 3 sent checkboxes with corresponding timestamps, recipients, and flow run references. 
+
+Dashboard ready data for response rates, aging, exceptions, pending remediation, and escalation status. 
+
+ 
+
+Scope and Communications Cadence 
+
+The automation supports the communications plan below. Target dates are retained from the supplied plan as current planning dates. For production, the flow should use record level due date fields rather than hard coded dates so the cadence can be reused. 
+
+Stage 
+
+Trigger 
+
+Audience 
+
+Communication 
+
+Required Owner Action 
+
+Timing 
+
+Target 
+
+Initial communication sent 
+
+Account is identified as noncompliant 
+
+Account Owner 
+
+Email with account metadata, deficiencies, policy reference, required actions, and response due date 
+
+Confirm ownership and review issues 
+
+Day 0 
+
+9 Sep 2026 
+
+Acknowledge receipt and provide remediation plan 
+
+Initial notice received 
+
+Account Owner 
+
+Owner responds through the standardized form 
+
+Confirm or correct owner; validate account purpose; acknowledge deficiencies; provide remediation action, target date, and exception justification if applicable 
+
+10 business days 
+
+19 Sep 2026 
+
+No response  Escalate to SVP hierarchy 
+
+No acknowledgment or plan received 
+
+Owner and SLT 
+
+Automated reminder referencing the original request 
+
+Complete outstanding response 
+
+5 business days 
+
+24 Sep 2026 
+
+No response  Disable service account 
+
+Account remains unresolved after escalation 
+
+Owner and SLT 
+
+Automated reminder referencing the original request 
+
+Complete outstanding response 
+
+Day XX 
+
+9 Oct 2026 
+
+Delete service account 
+
+Owner remains nonresponsive or remediation date missed 
+
+Owner and Manager 
+
+Escalation email identifying the account, outstanding requirement, risk, and enforcement timeline 
+
+Provide remediation plan or approved exception 
+
+Day XX 
+
+8 Dec 2026 
+
+ 
+
+In Scope 
+
+SharePoint list schema, views, permissions, and account level audit fields. 
+
+Power Apps customized list form with account context, required questions, conditional visibility, and validation. 
+
+Power Automate flows for Notice 1, Notice 2, Notice 3, response status, error handling, and operational reporting. 
+
+Email template with account details, compliance deficiencies, due dates, and a record specific form link. 
+
+Best effort read receipt request and receipt logging if the approved email method supports it. 
+
+Controlled handoff to the team authorized to disable or delete accounts. 
+
+Out of Scope 
+
+Automatically disabling or deleting an account without a separate approval and execution control. 
+
+Using an Outlook read receipt as the sole evidence that an owner received or accepted the requirement. 
+
+Changing source system account data unless an approved integration is added. 
+
+Automatically approving compliance exceptions or CRE requests. 
+
+ 
+
+Proposed Solution Architecture 
+
+ 
+
+Figure 1  Account level workflow with response and no response paths 
+
+Components 
+
+Component 
+
+Purpose 
+
+SharePoint master list 
+
+Stores one item per service account, source attributes, deficiencies, due dates, response data, notice history, and outcome. 
+
+Power Apps form overlay 
+
+Customizes the SharePoint form, displays account details as read only, enforces required answers, and shows conditional fields. 
+
+Power Automate Notice 1 flow 
+
+Sends the initial owner email and records successful send evidence on the account item. 
+
+Power Automate escalation flow 
+
+Runs daily, selects overdue unresolved items, and sends Notice 2 or Notice 3 once each. 
+
+Power Automate response flow 
+
+Normalizes status, stamps acknowledgment and submission dates, and notifies IAM when assistance or review is needed. 
+
+Shared mailbox 
+
+Provides a stable sender identity, centralized Sent Items, operational continuity, and a monitored location for delivery or read receipt messages. 
+
+Reporting view 
+
+Surfaces notice status, owner response, remediation due dates, exceptions, aging, and enforcement candidates. 
+
+ 
+
+Key Design Decisions 
+
+Use one item per service account, not one item per owner. One owner may receive a consolidated email, but the flow must update each included account separately. 
+
+Generate a deep link that opens the selected SharePoint item in the customized Power Apps form. The link must include only the item identifier and site context, not sensitive account metadata. 
+
+Store each due date in SharePoint. Do not calculate production escalation dates from fixed dates embedded in flow actions. 
+
+Update a notice checkbox only after the email action succeeds. A failed send remains eligible for controlled retry. 
+
+Stop all reminder paths after a valid response, approved exception, remediation completion, or administrative hold. 
+
+SharePoint List Design 
+
+Recommended list name: Service Account Compliance Tracker. Enable version history. Limit editing so owners can update only the response fields through the form, while IAM administrators manage source data, deficiencies, and enforcement status. 
+
+Field 
+
+Type 
+
+Required 
+
+Purpose 
+
+Account Record ID 
+
+Single line text 
+
+Yes 
+
+Stable unique identifier from source or generated key. 
+
+Service Account Name 
+
+Single line text 
+
+Yes 
+
+Display name or account name. 
+
+Domain or Directory 
+
+Choice or text 
+
+Yes 
+
+Directory context. 
+
+Application 
+
+Single line text 
+
+No 
+
+Known application relationship. 
+
+Environment 
+
+Choice 
+
+No 
+
+Production, Nonproduction, DR, Other. 
+
+Account Owner 
+
+Person 
+
+Yes 
+
+Primary accountable owner. 
+
+Owner Manager 
+
+Person 
+
+No 
+
+Escalation recipient. 
+
+SLT Recipient 
+
+Person or Group 
+
+No 
+
+Leadership escalation recipient. 
+
+Compliance Deficiencies 
+
+Multiple lines text 
+
+Yes 
+
+All detected deficiencies for the account. 
+
+Policy Reference 
+
+Hyperlink or text 
+
+No 
+
+Applicable control or policy. 
+
+Identified Date 
+
+Date 
+
+Yes 
+
+Date noncompliance was recorded. 
+
+Response Due Date 
+
+Date 
+
+Yes 
+
+Notice 1 response deadline. 
+
+Escalation Due Date 
+
+Date 
+
+No 
+
+Notice 2 eligibility date. 
+
+Enforcement Notice Date 
+
+Date 
+
+No 
+
+Notice 3 eligibility date. 
+
+Enforcement Target Date 
+
+Date 
+
+No 
+
+Approved disable or deletion decision date. 
+
+Case Status 
+
+Choice 
+
+Yes 
+
+Controlled lifecycle status. 
+
+Automation Hold 
+
+Yes or No 
+
+Yes 
+
+Prevents automated notices when Yes. 
+
+ 
+
+Notice Tracking Fields 
+
+Field 
+
+Type 
+
+Purpose 
+
+Notice 1 Sent 
+
+Yes or No 
+
+Visible checkbox used for operational tracking and duplicate prevention. 
+
+Notice 1 Sent On 
+
+Date and time 
+
+Timestamp written only after successful send. 
+
+Notice 1 Recipients 
+
+Multiple lines text 
+
+Snapshot of To and CC recipients at send time. 
+
+Notice 1 Flow Run ID 
+
+Single line text 
+
+Correlation reference for troubleshooting and audit. 
+
+Notice 1 Receipt Status 
+
+Choice 
+
+Not Requested, Requested, Received, Declined, Unknown, Not Supported. 
+
+Notice 1 Receipt On 
+
+Date and time 
+
+Best effort timestamp if a receipt is received and correlated. 
+
+Notice 2 Sent 
+
+Yes or No 
+
+Visible checkbox used for operational tracking and duplicate prevention. 
+
+Notice 2 Sent On 
+
+Date and time 
+
+Timestamp written only after successful send. 
+
+Notice 2 Recipients 
+
+Multiple lines text 
+
+Snapshot of To and CC recipients at send time. 
+
+Notice 2 Flow Run ID 
+
+Single line text 
+
+Correlation reference for troubleshooting and audit. 
+
+Notice 2 Receipt Status 
+
+Choice 
+
+Not Requested, Requested, Received, Declined, Unknown, Not Supported. 
+
+Notice 2 Receipt On 
+
+Date and time 
+
+Best effort timestamp if a receipt is received and correlated. 
+
+Notice 3 Sent 
+
+Yes or No 
+
+Visible checkbox used for operational tracking and duplicate prevention. 
+
+Notice 3 Sent On 
+
+Date and time 
+
+Timestamp written only after successful send. 
+
+Notice 3 Recipients 
+
+Multiple lines text 
+
+Snapshot of To and CC recipients at send time. 
+
+Notice 3 Flow Run ID 
+
+Single line text 
+
+Correlation reference for troubleshooting and audit. 
+
+Notice 3 Receipt Status 
+
+Choice 
+
+Not Requested, Requested, Received, Declined, Unknown, Not Supported. 
+
+Notice 3 Receipt On 
+
+Date and time 
+
+Best effort timestamp if a receipt is received and correlated. 
+
+ 
+
+Recommended Case Status Values 
+
+New  Ready to Notify  Notice 1 Sent  Responded  In Remediation  Exception Pending  Exception Approved  Escalated  Enforcement Review  Remediated  Closed  Administrative Hold 
+
+ 
+
+Power Apps Form Design 
+
+The form should open the selected service account record and clearly separate read only account information from owner response fields. The owner must be authenticated. The account name, deficiencies, policy reference, owner, and due dates should be visible but not editable by the owner. 
+
+Field 
+
+Form Question 
+
+Control 
+
+Rule or Response 
+
+Acknowledgment 
+
+I acknowledge the identified compliance issue(s) and understand that unresolved accounts may be subject to escalation or enforcement. 
+
+Required checkbox or choice 
+
+Must be selected before submit. 
+
+Account still required 
+
+Is this service account still required? 
+
+Choice 
+
+Yes, No, Unsure. 
+
+Ownership 
+
+Is this service account owned by you or your team? 
+
+Choice 
+
+Yes, No, Unsure. 
+
+Business purpose accurate 
+
+Is the current account description or business purpose accurate? 
+
+Choice 
+
+Yes, No. 
+
+Correct business purpose 
+
+If No, provide the correct business purpose for this account. 
+
+Long text 
+
+Show and require when Business purpose accurate = No. 
+
+Application and environment 
+
+What application and environment is this used for? 
+
+Choice or text 
+
+Configuration decision required. The supplied response of Yes or No does not match the question. Recommend controlled application and environment values with Other text. 
+
+Correct application and environment 
+
+If needed, provide the correct application and environment. 
+
+Text 
+
+Show when current values are not accurate or Other is selected. 
+
+Target remediation date 
+
+What is your target remediation date? Remediation is expected to be completed in 60 business days. 
+
+Date 
+
+Required. Validate against policy or route late dates for exception review. 
+
+Remediation constraint 
+
+What is preventing remediation within the required timeframe? 
+
+Choice 
+
+Vendor dependency, Business Engagement, Operational Risk, Change Request Window, Pending CRE Approval. Show when target exceeds the required timeframe. 
+
+Interactive logon justification 
+
+If interactive logon is enabled, what is the business justification? A CRE is required. 
+
+Long text 
+
+Show and require when interactive logon is enabled. 
+
+CRE RITM number 
+
+Please provide the CRE RITM Number. 
+
+Short text 
+
+Show and require when interactive logon is enabled or an exception is pending. 
+
+IAM assistance 
+
+Do you need assistance from IAM to complete remediation? 
+
+Choice 
+
+Yes, No. 
+
+CyberArk managed 
+
+Is this account managed by CyberArk? 
+
+Choice 
+
+Yes, No. 
+
+Safe name 
+
+Provide the CyberArk safe name. 
+
+Short text 
+
+Show and require when CyberArk managed = Yes. 
+
+Password outside CyberArk 
+
+If the password is managed outside CyberArk, does CyberArk have the latest password? 
+
+Choice 
+
+Yes, No. Show when CyberArk managed = No or external password management applies. 
+
+ 
+
+Submission Behavior 
+
+Validate required and conditional fields before Submit is enabled. 
+
+On submit, stamp Acknowledged On and Response Submitted On and change status to Responded or Exception Pending. 
+
+Notify IAM when assistance is requested, ownership is disputed, the account is no longer required, or the target date requires exception review. 
+
+Display a confirmation screen containing the account name, submitted date, recorded target date, and case status. 
+
+Prevent owners from changing notice history, deficiencies, policy references, enforcement fields, or administrative status. 
+
+Power Automate Workflow Specification 
+
+Flow 1  Send Initial Notice 
+
+Trigger: Scheduled flow or approved manual batch trigger. 
+
+Selection: Case Status = Ready to Notify; Notice 1 Sent = No; Automation Hold = No; Owner email is populated. 
+
+Get eligible SharePoint items using an indexed OData filter. Enable pagination and define an operational batch limit. 
+
+For each account, construct the record specific Power Apps form URL and HTML email body. 
+
+Send from the approved shared mailbox to the account owner. Include service account metadata, detected deficiencies, policy reference, required actions, response due date, and form link. 
+
+After a successful email action, update Notice 1 Sent = Yes, Notice 1 Sent On = current UTC time, Notice 1 Recipients, Notice 1 Flow Run ID, Case Status = Notice 1 Sent, and Receipt Status. 
+
+On failure, write Last Automation Error and Error On. Do not select Notice 1 Sent. Notify the support queue after the configured retry threshold. 
+
+Flow 2  Daily Reminder and Escalation 
+
+Trigger: Recurrence once per business day after the source data refresh window. 
+
+Get open items where Automation Hold = No and Case Status is not Remediated, Closed, or Exception Approved. 
+
+If no valid response exists and the escalation due date is reached and Notice 2 Sent = No, send Notice 2 to the owner and configured SLT recipient. 
+
+If the item remains unresolved and the enforcement notice date is reached and Notice 3 Sent = No, send Notice 3 to the owner, manager, SLT recipient, and enforcement review queue. 
+
+Update only the notice fields associated with the email that succeeded. Preserve the earlier notice values. 
+
+If a response arrives before a send action executes, recheck current item status immediately before sending to prevent a stale reminder. 
+
+Flow 3  Process Owner Response 
+
+Trigger: When a SharePoint item is modified, with trigger conditions that detect response field changes and prevent self triggered loops. 
+
+Validate that required answers are present and the acknowledged checkbox is selected. 
+
+Stamp response dates and derive the next status: Responded, In Remediation, Exception Pending, Ownership Review, or Closure Review. 
+
+Notify IAM for assistance requests, ownership disputes, accounts marked no longer required, late target dates, interactive logon with missing CRE, or CyberArk data gaps. 
+
+Record the notification result and do not overwrite owner supplied response values. 
+
+Flow 4  Receipt Intake  Optional 
+
+If the program requires read receipt collection, use an approved method that can request a receipt and a dedicated mailbox process that attempts to match incoming receipts to the account and notice number. Store unmatched receipts in an exception queue for review. This flow is supplemental and must not control escalation or closure. 
+
+ 
+
+Read Receipt and Delivery Evidence 
+
+Read receipts are not dependable compliance evidence. A recipient or tenant policy may decline, suppress, or prevent them. The standard Outlook Send an email V2 action records a successful connector action and places mail in Sent Items, but Microsoft documents that this action does not return a message ID. That limits deterministic receipt correlation. 
+
+Option 
+
+Method 
+
+Evidence Stored 
+
+Constraint 
+
+Recommended baseline 
+
+Outlook Send an email from a shared mailbox V2 
+
+Record Notice Sent, Sent On, recipients, flow run ID, and form submission. Set Receipt Status to Not Supported or Unknown. 
+
+Simple, supportable, auditable at the process level. Does not prove the message was opened. 
+
+Enhanced best effort 
+
+Microsoft Graph sendMail through an approved connection or custom connector 
+
+Request a read receipt on the message and store a generated correlation token in the subject or body. Monitor the mailbox for returned receipts. 
+
+May require premium licensing, security review, application permissions, and custom receipt parsing. Receipt can still be declined or suppressed. 
+
+Authoritative acknowledgment 
+
+Power Apps form submission 
+
+Stamp acknowledgment and response dates on the account item. 
+
+Use this as evidence that the owner acknowledged the issue and supplied a plan. 
+
+ 
+
+Recommended Control Position 
+
+Request read receipts only if stakeholders still want the signal, but do not delay escalation waiting for a receipt. Use successful send timestamps as communication evidence and the owner form submission as acknowledgment evidence. If proof of delivery is mandatory, confirm whether Exchange message trace data is available to the authorized operations team and define its retention and access requirements separately. 
+
+Email Content Requirements 
+
+Service account name, domain or directory, application and environment when known. 
+
+Detected compliance deficiencies and applicable policy reference. 
+
+Required actions and response due date. 
+
+Secure form link for the specific account record. 
+
+Escalation or enforcement consequence appropriate to the notice number. 
+
+IAM contact or monitored support mailbox. 
+
+Correlation token containing the account record ID and notice number, without sensitive data. 
+
+ 
+
+Business Rules and Safeguards 
+
+Rule 
+
+Implementation 
+
+Duplicate prevention 
+
+A notice is eligible only when its Sent checkbox is No. Recheck the current item immediately before send. 
+
+Successful send 
+
+Set Sent = Yes only after the email action reports success. Stamp UTC time and recipients in the same success scope. 
+
+Response suppression 
+
+Do not send reminders after a valid response, approved exception, remediation, closure, or administrative hold. 
+
+Owner change 
+
+If ownership changes, preserve prior recipient history and direct the next notice to the current verified owner. 
+
+Business days 
+
+Use a maintained business calendar list or precomputed milestone dates. Do not assume addDays equals business days. 
+
+Bulk owners 
+
+A consolidated owner email may list multiple accounts, but every account retains its own link, notice checkbox, timestamp, and status. 
+
+Enforcement 
+
+Automation may notify and create a review item. Disablement or deletion requires an approved human decision and execution evidence. 
+
+Data protection 
+
+Do not place passwords, secrets, privileged credentials, or sensitive technical details in email or form URLs. 
+
+Concurrency 
+
+Use controlled concurrency or item locking when batch size is high to avoid two runs updating the same record. 
+
+Error handling 
+
+Use Try, Catch, and Finally scopes; capture flow run ID, failed action, error text, and retry count. 
+
+ 
+
+Security and Access 
+
+IAM administrators: full control of account source, deficiency, notice, status, and enforcement fields. 
+
+Account owners: read the assigned record and edit only response fields through Power Apps. 
+
+Leadership and auditors: read only access to reporting views or approved extracts. 
+
+Flow service identity: least privilege access to the SharePoint list and Send As permission for the shared mailbox. 
+
+Use environment variables or solution references for site URL, list name, shared mailbox, form URL, and escalation group. 
+
+Apply retention, sensitivity, and audit requirements aligned to the organization policy. 
+
+Recommended SharePoint Views 
+
+Ready to Notify  Awaiting Response  Notice 2 Due  Notice 3 Due  Responses Needing IAM Review  Remediation Due  Exception Pending  Enforcement Review  Remediated or Closed  Automation Errors 
+
+ 
+
+Reporting and Operational Measures 
+
+Measure 
+
+Definition 
+
+Accounts identified 
+
+Count of active noncompliant account records. 
+
+Notice 1 completion 
+
+Percent and count with Notice 1 Sent = Yes. 
+
+Response rate 
+
+Percent responding by the response due date and overall. 
+
+Escalation rate 
+
+Count and percent receiving Notice 2 or Notice 3. 
+
+Remediation aging 
+
+Open accounts by age band and days past target date. 
+
+Exception demand 
+
+Count by constraint, CRE status, owner, and due date. 
+
+IAM assistance requests 
+
+Count open and aging. 
+
+Automation reliability 
+
+Successful sends, failed sends, retry count, and unresolved errors. 
+
+ 
+
+Build and Deployment Plan 
+
+Phase 
+
+Deliverable 
+
+1  Confirm 
+
+Approve list ownership, source feed, status values, notice content, shared mailbox, escalation recipients, business day rules, and enforcement approval path. 
+
+2  Configure 
+
+Create the SharePoint list, indexes, views, permissions, versioning, and test records. 
+
+3  Build form 
+
+Create the customized Power Apps form, conditional logic, validations, submit behavior, and role based field controls. 
+
+4  Build flows 
+
+Implement Notice 1, daily escalation, response processing, error handling, and optional receipt intake. 
+
+5  Test 
+
+Run functional, permission, duplicate prevention, timing, negative path, and volume tests. 
+
+6  Pilot 
+
+Pilot with a controlled account population and verify email rendering, links, responses, escalations, and reporting. 
+
+7  Deploy 
+
+Move solution components using the approved environment and connection reference process. Publish runbook and support ownership. 
+
+ 
+
+Acceptance Criteria 
+
+Every eligible service account receives Notice 1 once and the account item records the successful send. 
+
+Each form link opens the intended account and owners cannot alter protected account or audit fields. 
+
+All required and conditional questions behave as designed and valid submissions stamp the response status and date. 
+
+Notice 2 and Notice 3 send only when their stored eligibility dates are reached and the account remains unresolved. 
+
+A successful form response suppresses future automated reminders. 
+
+Failed sends remain unsent, are retried according to policy, and appear in an operational error view. 
+
+Notice history and prior recipients remain intact after owner or status changes. 
+
+Disablement and deletion are not executed automatically without the approved control and authorization. 
+
+ 
+
+Test Scenarios 
+
+ID 
+
+Scenario 
+
+Expected Result 
+
+T01 
+
+Ready account with valid owner 
+
+Notice 1 sent once; checkbox, timestamp, recipients, and status updated. 
+
+T02 
+
+Email connector fails 
+
+Notice remains unsent; error captured; support notification or retry occurs. 
+
+T03 
+
+Owner submits complete response 
+
+Acknowledgment and response dates stamped; reminders suppressed. 
+
+T04 
+
+Owner disputes ownership 
+
+Status changes to Ownership Review; IAM notified; record retained. 
+
+T05 
+
+Business purpose marked inaccurate 
+
+Correct purpose field becomes visible and required. 
+
+T06 
+
+Interactive logon enabled 
+
+Justification and CRE RITM become visible and required. 
+
+T07 
+
+No response by escalation date 
+
+Notice 2 sent once to configured recipients and tracked. 
+
+T08 
+
+No response by enforcement notice date 
+
+Notice 3 sent once and enforcement review initiated. 
+
+T09 
+
+Automation Hold = Yes 
+
+No automated notice is sent. 
+
+T10 
+
+Concurrent scheduled runs 
+
+Only one notice is sent for the same account and stage. 
+
+T11 
+
+Read receipt declined or absent 
+
+Receipt remains Unknown or Declined; escalation still follows response status and due dates. 
+
+T12 
+
+Account marked no longer required 
+
+Closure or deletion review is created; no automatic deletion occurs. 
+
+ 
+
+Decisions Required Before Build 
+
+Will notices be sent one email per account or one consolidated email per owner? The data model supports either, but account level links and updates remain mandatory. 
+
+What events map to Notice 1, Notice 2, and Notice 3, and which supplied stages are enforcement actions rather than email notices? 
+
+What are the approved values for Day XX and how will business days and holidays be calculated? 
+
+Who is the authoritative SLT or SVP escalation recipient for each owner? 
+
+Is the target remediation date limited to 60 business days, or may the owner enter a later date that routes to exception review? 
+
+Should the application and environment question use controlled choices, free text, or current values with an Accurate Yes or No question? 
+
+Is a best effort read receipt request sufficient, or is Exchange message trace evidence required? 
+
+What approval is required before an account is disabled or deleted, and which team executes the action? 
+
+ 
