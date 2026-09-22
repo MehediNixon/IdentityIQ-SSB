@@ -179,6 +179,86 @@ Reference: https://community.sailpoint.com/t5/Deployment-Accelerator-Knowledge/I
 
 ## Rules
 
+## JML Workflow (Joiner / Mover / Leaver) – End-to-End
+
+JML in IdentityIQ is typically driven by authoritative source updates (for example HR).  
+The lifecycle event (Joiner, Mover, Leaver) is detected during aggregation + Identity Refresh, then routed to the right workflow and provisioning actions.
+
+### 1) Prerequisites
+- Authoritative source onboarded (HRMS/Workday/etc.) with reliable hire, transfer, and termination attributes.
+- Identity Mapping configured for core attributes (employeeId, status, department, manager, start/end date, etc.).
+- Lifecycle states defined (for example: `PreHire`, `Active`, `Inactive`, `Terminated`).
+- Provisioning-enabled target applications connected (AD, email, ERP, etc.).
+
+### 2) Data and Event Design
+- Decide the **trigger attributes** for each flow:
+  - **Joiner**: new identity / start-date reached / status changes to active.
+  - **Mover**: department, location, manager, job-code, cost-center, or title changes.
+  - **Leaver**: termination date reached / status changes inactive or terminated.
+- Define event conditions in IIQ Identity Event configuration.
+- Map each event to an Identity Lifecycle workflow (Joiner/Mover/Leaver).
+
+### 3) Build Workflows
+- Create or clone dedicated workflows:
+  - `LCM Joiner`
+  - `LCM Mover`
+  - `LCM Leaver`
+- Use workflow variables like `identityName`, `flow`, and optional control flags.
+- Typical workflow stages:
+  1. Initialize context and validate identity
+  2. Build/compile provisioning plan
+  3. Policy checks and approval (if required)
+  4. Provision execution
+  5. Retry/escalation handling
+  6. Audit + notifications
+
+### 4) Joiner Flow (Day-0 Access)
+- Create identity when authoritative record appears.
+- Assign birthright roles by policy (department/location/title).
+- Provision core accounts (directory, mail, collaboration).
+- Send welcome/onboarding notifications.
+
+### 5) Mover Flow (Change in Role/Org)
+- Detect significant attribute changes.
+- Recalculate role model:
+  - add new required access
+  - remove stale access (with approval if needed)
+- Execute reconciliation and send manager/app owner notifications for sensitive deltas.
+
+### 6) Leaver Flow (Offboarding)
+- Trigger from termination/inactive state.
+- Immediately disable high-risk access (VPN, admin roles, privileged apps).
+- Disable or delete accounts based on policy.
+- Remove access and close outstanding approval/work items if your process requires it.
+- Keep audit trail for compliance evidence.
+
+### 7) Orchestration Through Identity Refresh
+- Run aggregation from authoritative source.
+- Run **Identity Refresh** with:
+  - Process Events = enabled
+  - Refresh Identity Entitlements / Role metadata as required
+  - Provision Assignments = based on your operating model
+- Verify the lifecycle event and launched workflow case in debug/task results.
+
+### 8) Testing Strategy
+- Create test personas:
+  - new hire (Joiner)
+  - transfer (Mover)
+  - terminated user (Leaver)
+- Validate for each persona:
+  - event detection
+  - workflow launch
+  - approval routing
+  - provisioning result
+  - rollback/retry handling
+  - audit entries and notifications
+
+### 9) Operational Controls
+- Add task/reporting for “failed lifecycle provisioning”.
+- Add SLA alerts for stuck approvals and failed connector operations.
+- Version-control workflows/rules in SSB and promote through DEV → QA → PROD.
+- Review JML policy quarterly with HR, IAM, and application owners.
+
 ## Application Onboarding
 Application Onboarding
 There are several different types of connectors. Connectors are commonly grouped by the ways in which they can communicate
@@ -972,4 +1052,3 @@ Mainframe Connector executes requests (aggregation, provisioning, role/entitleme
 # Account Correlation
 
 # BeanShell
-
